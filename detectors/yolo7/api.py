@@ -112,8 +112,25 @@ def court_filter(boxes, court=POLY):
     return new_boxes
 
 
+def fusion(balls, players):
+    margin = None
+    key = -1
+    if len(balls) == 0:
+        return key, players
+    else:
+        b = balls[0][0:4]
+        bx, by = (b[0] + b[2]) // 2, (b[1] + b[3]) // 2
+        for i, p in enumerate(players):
+            if margin is None:
+                margin = (p[2] - p[0]) // 2
+            if p[0] - margin <= bx <= p[2] + margin and p[1] - margin <= by <= p[3] + margin:
+                key = i
+                break
+        return key, players
+
+
 class Yolo7:
-    def __init__(self, ckpt='./yolo7/checkpoints/yolov7-e6e.pt', device='cuda:2', trace=False):
+    def __init__(self, ckpt='./yolo7/checkpoints/yolov7-e6e.pt', device='cuda:0', trace=False):
         self.device = device
         self.img_size = 640
         self.model = attempt_load(ckpt, map_location=device)
@@ -306,6 +323,18 @@ class Yolo7:
         #     window = self.windows[0]
 
         return out, players, []
+
+    def handle_frame(self, frame, frame_id):
+        players = court_filter(self.player_det(frame))
+        balls, _, window = self.random_patch_det(frame, cls_ids=[32], row=2, col=4,
+                                                 buffer=True,
+                                                 frame_id=frame_id)
+        key, players = fusion(balls, players)
+        frame_result = dict()
+        frame_result["player"] = players
+        frame_result["ball"] = balls
+        frame_result["key_player"] = key
+        return frame_result
 
 
 if __name__ == '__main__':
