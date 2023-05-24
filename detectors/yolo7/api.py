@@ -260,6 +260,26 @@ class Yolo7:
         det_list = filter_player_size(det_list)
         return det_list
 
+    def detect_ball(self, img):
+        det_list = []
+
+        res = self.detect(img,cls_ids=[0])
+        if len(res) != 0:
+            det_list.append(res)
+        out = torch.cat(det_list) if len(det_list) != 0 else []
+
+        if len(out) != 0:
+            cache = []
+            _, indices = torch.sort(out, descending=True, dim=0)
+            for i, idx in enumerate(indices[:, -2]):
+                cache.append(out[idx].detach().cpu().tolist())
+            out = deduplicate(cache)
+            out = court_filter(out)
+            #out = self.check_box(out, img)
+
+        return out
+
+
     def random_patch_det(self, img, cls_ids=None, row=2, col=2, overlap=20, frame_id=0,
                          buffer=False, buffer_topk=3):
         height, width, _ = img.shape

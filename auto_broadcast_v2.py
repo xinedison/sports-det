@@ -11,13 +11,13 @@ sys.path.append('./detectors/yolo7')
 sys.path.append('./visualization/')
 sys.path.append('./utils/')
 
-from api import Yolo7, distance, is_in_poly, POLY, court_filter
+from api import Yolo7, distance, is_in_poly, POLY, court_filter, fusion
 from bbox_plot import plain_plot, draw_poly
 
-data_root = '/home/liweiliao/Downloads/panorama/'
+data_root = '/home/avs/liwei/Sports_project/'
 # INPUT_FILE = '/home/liweiliao/Downloads/panorama/src_5min.mp4'
-INPUT_FILE = '/home/liweiliao/Downloads/panorama/record3.ts'
-OUTPUT_FILE = data_root + 'record3_demo.mp4'
+INPUT_FILE = '/home/avs/liwei/Sports_project/panorama/raw/record1.ts'#'/home/avs/liwei/Sports_project/panorama/raw/record3.ts'
+OUTPUT_FILE = data_root + 'records1_demo_output.mp4'
 BALL_LOC = 'ball_loc.json'
 PLAYER_LOC = 'player_loc.json'
 FUSION = 'record3.json'
@@ -196,23 +196,6 @@ def viz():
     writer.release()
 
 
-def fusion(balls, players):
-    margin = None
-    key = -1
-    if len(balls) == 0:
-        return key, players
-    else:
-        b = balls[0][0:4]
-        bx, by = (b[0] + b[2]) // 2, (b[1] + b[3]) // 2
-        for i, p in enumerate(players):
-            if margin is None:
-                margin = (p[2] - p[0]) // 2
-            if p[0] - margin <= bx <= p[2] + margin and p[1] - margin <= by <= p[3] + margin:
-                key = i
-                break
-        return key, players
-
-
 def position_filter(players, region=(100, 3400, 500, 1600)):
     new_players = []
     for p in players:
@@ -243,6 +226,7 @@ def _main():
             frame_id += 1
 
             players = detector.player_det(frame)
+            #print(players)
             # players = position_filter(players, region=(100, 3400, 500, 1600))
             players = court_filter(players)
 
@@ -250,8 +234,8 @@ def _main():
             balls, _, window = detector.random_patch_det(frame, cls_ids=[32], row=2, col=4,
                                                          buffer=True,
                                                          frame_id=frame_id)
-            print(balls)
-            print(players)
+            # print(balls)
+            # print(players)
 
             key, players = fusion(balls, players)
             frame_result = dict()
@@ -259,6 +243,7 @@ def _main():
             frame_result["ball"] = balls
             frame_result["key_player"] = key
             results[str(frame_id)] = frame_result
+            #print(frame_result)
 
             # frame = plain_plot(frame, (100, 450, 3400, 1600))
             # frame = cv2.resize(frame, (1800, 800))
@@ -277,8 +262,9 @@ def _main():
                 # with open(PLAYER_LOC, 'w') as f:
                 with open(FUSION, 'w') as f:
                     f.write(json.dumps(results))
-        except:
+        except Exception as e:
             print('over index')
+            print('exception ', e)
     with open(FUSION, 'w') as f:
         f.write(json.dumps(results))
     toc = time()
@@ -286,8 +272,141 @@ def _main():
 
     reader.release()
 
+def broadcast_for_frame(detector, ball_detector, frame, frame_id, results, filtered_results, base, key_buffer):
+    w_base = 0.95
+    players = detector.player_det(frame)
+    #print(players)
+    # players = position_filter(players, region=(100, 3400, 500, 1600))
+    players = court_filter(players)
+
+    # ball det
+    #balls, _, window = detector.random_patch_det(frame, cls_ids=[32], row=2, col=4,
+    #                                             buffer=True,
+    #                                             frame_id=frame_id)
+    balls = ball_detector.detect_ball(frame)
+
+
+    # print(balls)
+    # print(players)
+
+    key, players = fusion(balls, players)
+    frame_result = dict()
+    frame_result["player"] = players
+    frame_result["ball"] = balls
+    frame_result["key_player"] = key
+    results[str(frame_id)] = frame_result
+    #print(frame_result)
+
+    fid = frame_id
+    frm = frame
+    cv2.putText(frm, str(fid), (100, 100), font, 3, (255, 255, 0), 2, cv2.LINE_AA)
+    x_axis = []
+
+    current_results = dict()
+    players, balls, key = results[str(fid)]["player"], results[str(fid)]["ball"], results[str(fid)]["key_player"]
+    current_results["players"] = players
+    # print(players)
+    frm = plain_plot(frm, (100, 500, 3400, 1550), color=(0, 122, 0))
+    # frm = plain_plot(frm, (300, 500, 3100, 1400), color=(255, 255, 255))
+    frm = draw_poly(frm, POLY, color=(0, 0, 125))
+    current_results["ball_region"] = POLY
+    current_results["player_region"] = (100, 500, 3400, 1550)
+    current_results["ball"] = []
+    if len(balls) > 0:
+        frm = plain_plot(frm, balls[0][0:4], color=(0, 0, 255))
+        current_results["ball"] = balls[0][0:4]
+
+    key_x = -1
+    for i, box in enumerate(players):
+        x_axis.append(box[0])
+        frm = plain_plot(frm, box[0:4], color=(125, 0, 88))
+        if i == key:
+            key_buffer = box[0:4]
+            current_results["key_player"] = key_buffer
+            frm = plain_plot(frm, box[0:4], color=(125, 255, 88))
+            key_x = box[0]
+
+    # tracking
+    miss = True
+    if key_x == -1 and key_buffer is not None:
+        for box in players:
+            if key == -1:
+                if compute_iou(box[0:4], key_buffer) > 0.1:
+                    key_buffer = box[0:4]
+                    current_results["key_player"] = key_buffer
+                    frm = plain_plot(frm, box[0:4], color=(125, 255, 88))
+                    key_x = box[0]
+                    miss = False
+                    break
+    # if miss:
+    #     key_buffer = None
+
+    x_axis = sorted(x_axis)
+    x_axis = x_axis[1:-1]
+
+    if key_x >= 0:
+        ls = [key_x] * key_importance
+        x_axis += ls
+    x_mean = sum(x_axis) / len(x_axis) if key_x == -1 else key_x
+    base = x_mean if base < 0 else base
+    base = int(w_base * base + (1 - w_base) * x_mean)
+    frm = cv2.line(frm, (base, 0), (base, 1600), (255, 0, 0), 3)
+    filtered_results[str(fid)] = current_results
+    if fid % 2 == 0:
+        with open('result_fusion_record3_out.json', 'w') as f:
+            f.write(json.dumps(filtered_results))
+    return frm, base, key_buffer
+
+
+def auto_broadcast():
+    detector = Yolo7(ckpt='./detectors/yolo7/checkpoints/yolov7-e6e.pt')
+    ball_detector = Yolo7(ckpt='./detectors/yolo7/checkpoints/ball_best.pt')
+
+    reader = cv2.VideoCapture(INPUT_FILE)
+    writer = cv2.VideoWriter(OUTPUT_FILE,
+                             cv2.VideoWriter_fourcc(*"mp4v"),
+                             30,  # fps
+                             (3632, 1632))
+
+    # (1632, 3632, 3)
+
+    more = True
+    frame_id = -1
+    results = dict()
+    filtered_results = dict()
+
+    tic = time()
+
+    base = -1
+    key_buffer = None
+
+    while more:
+        try:
+
+            more, frame = reader.read()
+
+            frame_id += 1
+
+            frm, base, key_buffer = broadcast_for_frame(detector, ball_detector, frame, frame_id, results, filtered_results, base, key_buffer)
+
+            writer.write(frm)
+            if frame_id % 10 == 0:
+                print(frame_id)
+
+
+        except Exception as e:
+            print('over index')
+            print('exception ', e)
+
+
+    reader.release()
+    writer.release()
+
+    
+
 
 if __name__ == '__main__':
-    # _main()
-    # viz()
-    read_viz()
+    auto_broadcast()
+    #_main()
+    #viz()
+    # read_viz()
